@@ -13,8 +13,8 @@ export default class RpkiUtils {
         this.clientId = env.clientId || "";
         this.logger = env.logger;
         this.userAgent = `${this.clientId}/${env.version}`;
-        const defaultMarkDataAsStaleAfterMinutes = 60;
-        const providers = RpkiValidator.providers;
+        const defaultMarkDataAsStaleAfterMinutes = 120;
+        const providers = [...RpkiValidator.providers, "api"];
 
         if (this.params.url || this.params.vrpProvider === "api") {
             this.params.vrpProvider = "api";
@@ -43,8 +43,8 @@ export default class RpkiUtils {
                     message: "The specified vrpProvider is not valid. Using default vrpProvider."
                 });
             }
-            this.params.refreshVrpListMinutes = Math.max(this.params.refreshVrpListMinutes || 0, 5);
-            this.params.preCacheROAs = this.params.preCacheROAs !== false;
+            this.params.refreshVrpListMinutes = Math.max(this.params.refreshVrpListMinutes || 0, 1);
+            this.params.preCacheROAs = !!(this.params.preCacheROAs ?? true);
         }
 
         if (this.params.markDataAsStaleAfterMinutes !== undefined) {
@@ -66,6 +66,7 @@ export default class RpkiUtils {
         this._loadRpkiValidator();
 
         if (this.params.markDataAsStaleAfterMinutes > 0) {
+            this._markAsStale();
             setInterval(this._markAsStale, this.params.markDataAsStaleAfterMinutes * 60 * 1000);
         }
 
@@ -79,6 +80,7 @@ export default class RpkiUtils {
             const rpkiValidatorOptions = {
                 connector: this.params.vrpProvider,
                 clientId: this.clientId,
+                advancedStatsRefreshRateMinutes: this.params.advancedStatsRefreshRateMinutes ?? 120,
                 axios: axiosEnrich(axios, (!this.params.noProxy && this.agent) ? this.agent : null, this.userAgent)
             };
 
@@ -87,7 +89,7 @@ export default class RpkiUtils {
             }
             this.rpki = new RpkiValidator(rpkiValidatorOptions);
 
-            if (!!this.params.preCacheROAs) {
+            if (this.params.preCacheROAs) {
                 this._preCache();
             }
         }
@@ -174,7 +176,6 @@ export default class RpkiUtils {
                 .preCache(this.params.refreshVrpListMinutes)
                 .then(data => {
                     this.status.data = true;
-                    this.status.stale = false;
 
                     return data;
                 })
@@ -189,7 +190,6 @@ export default class RpkiUtils {
                 })
         } else {
             this.status.data = true;
-            this.status.stale = false;
             return Promise.resolve();
         }
     };
@@ -213,7 +213,7 @@ export default class RpkiUtils {
                     origin: message.originAS
                 };
             }))
-            .then(results => {
+            .then((results=[]) => {
                 for (let result of results) {
                     const key = result.origin.getId() + "-" + result.prefix;
                     for (let { message, matchedRule, callback } of batch[key]) {
@@ -243,31 +243,32 @@ export default class RpkiUtils {
             .then(() => {
                 return Promise.all(batch
                     .map(({ prefix, origin }) => {
-                        const origins = [].concat.apply([], [origin.getValue()]);
+                        const origins = [origin.getValue()].flat();
+
                         return Promise
                             .all(origins.map(asn => this.rpki.validate(prefix, asn, true))) // Validate each origin
-                            .then(results => {
+                            .then((results=[]) => {
                                 if (results.length === 1) { // Only one result = only one origin, just return
                                     return { ...results[0], prefix, origin };
                                 } else { // Multiple origin
-                                    if (results.every(result => result && result.valid)) { // All valid
+                                    if (!!results.length && results.every(result => result && result.valid)) { // All valid
                                         return {
                                             valid: true,
-                                            covering: [].concat.apply([], results.map(i => i.covering)),
+                                            covering: results.map(i => i.covering).flat(),
                                             prefix,
                                             origin
                                         };
                                     } else if (results.some(result => result && !result.valid)) { // At least one not valid
                                         return {
                                             valid: false,
-                                            covering: [].concat.apply([], results.map(i => i.covering)),
+                                            covering: results.map(i => i.covering).flat(),
                                             prefix,
                                             origin
                                         };
                                     } else { // return not covered
                                         return {
                                             valid: null,
-                                            covering: [].concat.apply([], results.map(i => i.covering)),
+                                            covering: results.map(i => i.covering).flat(),
                                             prefix,
                                             origin
                                         };
@@ -300,23 +301,31 @@ export default class RpkiUtils {
         if (!!this.params.preCacheROAs) {
             const digest = md5(JSON.stringify(this.getVRPs()));
             if (this.oldDigest) {
-                this.status.stale = this.oldDigest === digest;
+                const stale = this.oldDigest === digest;
+
+                if (this.status.stale !== stale) {
+                    if (stale) {
+                        this.logger.log({
+                            level: 'error',
+                            message: "The VRP file is stale"
+                        });
+                    } else {
+                        this.logger.log({
+                            level: 'info',
+                            message: "The VRP file is back to normal"
+                        });
+                    }
+                }
+
+                this.status.stale = stale;
             }
 
             this.oldDigest = digest;
         }
     };
 
-    getExpiringElements = (index, vrp, expires) => {
-        return index.getExpiring(vrp, expires, moment.utc().unix());
+    getExpiringElements = (vrp, expires) => {
+        return this.rpki.getExpiringElements(vrp, expires, moment.utc().unix());
     }
-
-    _getVrpIndex = () => {
-        if (this.rpki?.getAdvancedStats) {
-            return this.rpki.getAdvancedStats();
-        } else {
-            return Promise.resolve(null);
-        }
-    };
 
 }

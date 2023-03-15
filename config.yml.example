@@ -40,6 +40,7 @@ monitors:
     name: withdrawal-detection
     params:
       thresholdMinPeers: 40
+      notificationIntervalSeconds: 3600
 
   - file: monitorAS
     channel: misconfiguration
@@ -63,7 +64,7 @@ monitors:
       enableExpirationAlerts: true
       enableExpirationCheckTA: true
       enableDeletedCheckTA: true
-      enableAdvancedRpkiStats: true
+      enableAdvancedRpkiStats: false
       roaExpirationAlertHours: 2
       checkOnlyASns: true
       toleranceDeletedRoasTA: 20
@@ -228,6 +229,7 @@ reports:
 #      - rpki
 #      - roa
 #    params:
+#      method: post
 #      templates: # See here how to write a template https://github.com/nttgin/BGPalerter/blob/main/docs/context.md
 #        default: '{"text": "${summary}"}'
 #      headers:
@@ -264,6 +266,25 @@ reports:
 #      - roa
 #    params:
 #      maxAlertsAmount: 25
+
+#  - file: reportMatrix
+#    channels:
+#      - hijack
+#      - newprefix
+#      - visibility
+#      - path
+#      - misconfiguration
+#      - rpki
+#      - roa
+#    params:
+#      showPaths: 0 # Amount of AS_PATHs to report in the alert
+#      homeserverUrl: https://matrix.org
+#      accessToken: _ACCESS_TOKEN_ 
+#      roomIds:
+#        default: _ROOM_ID_
+#        noc: _ROOM_ID_
+
+
 
 ############################
 # Notification settings:

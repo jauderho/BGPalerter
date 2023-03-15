@@ -59,7 +59,8 @@ export default class Config {
                     channel: "visibility",
                     name: "withdrawal-detection",
                     params: {
-                        thresholdMinPeers: 40
+                        thresholdMinPeers: 40,
+                        notificationIntervalSeconds: 3600
                     }
                 },
                 {
@@ -89,7 +90,7 @@ export default class Config {
                         enableExpirationAlerts: true,
                         enableExpirationCheckTA: true,
                         enableDeletedCheckTA: true,
-                        enableAdvancedRpkiStats: true,
+                        enableAdvancedRpkiStats: false,
                         roaExpirationAlertHours: 2,
                         checkOnlyASns: true,
                         toleranceDeletedRoasTA: 20,
@@ -124,9 +125,10 @@ export default class Config {
                 compressOnRotation: false,
             },
             rpki: {
-                vrpProvider: "ntt",
+                vrpProvider: "rpkiclient",
                 preCacheROAs: true,
-                refreshVrpListMinutes: 15
+                refreshVrpListMinutes: 15,
+                markDataAsStaleAfterMinutes: 120
             },
             rest: {
                 host: "localhost",
