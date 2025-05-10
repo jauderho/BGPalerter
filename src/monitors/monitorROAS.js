@@ -6,6 +6,20 @@ import moment from "moment";
 import ipUtils from "ip-sub";
 import batchPromises from "batch-promises";
 
+const getTaToleranceDict = (tolerance) => {
+    if (typeof(tolerance) === "number") {
+        return {
+            ripe: tolerance,
+            apnic: tolerance,
+            arin: tolerance,
+            lacnic: tolerance,
+            afrinic: tolerance
+        }
+    }
+
+    return tolerance;
+}
+
 export default class MonitorROAS extends Monitor {
 
     constructor(name, channel, params, env, input){
@@ -25,8 +39,8 @@ export default class MonitorROAS extends Monitor {
         this.roaExpirationAlertHours = params.roaExpirationAlertHours || 2;
         this.checkOnlyASns = params.checkOnlyASns != null ? params.checkOnlyASns : true;
 
-        this.toleranceExpiredRoasTA = params.toleranceExpiredRoasTA || 20;
-        this.toleranceDeletedRoasTA = params.toleranceDeletedRoasTA || 20;
+        this.toleranceExpiredRoasTA = getTaToleranceDict(params.toleranceExpiredRoasTA || 20);
+        this.toleranceDeletedRoasTA = getTaToleranceDict(params.toleranceDeletedRoasTA || 20);
         this.timesDeletedTAs = {};
         this.seenTAs = {};
         this.monitored = {
@@ -84,10 +98,10 @@ export default class MonitorROAS extends Monitor {
                     const diff = max - min;
                     const percentage = 100 / max * diff;
 
-                    if (percentage > this.toleranceDeletedRoasTA) {
+                    if (percentage > this.toleranceDeletedRoasTA[ta]) {
                         const message = `Possible TA malfunction or incomplete VRP file: ${percentage.toFixed(2)}% of the ROAs disappeared from ${ta}`;
 
-                        this.publishAlert(`disappeared-${ta}`, // The hash will prevent alert duplications in case multiple ASes/prefixes are involved
+                        this.publishAlert(`disappeared-${ta}`,
                             ta,
                             {group: "default"},
                             message,
@@ -115,14 +129,14 @@ export default class MonitorROAS extends Monitor {
             const max = sizes[ta];
             const percentage = (100 / max) * min;
 
-            if (percentage > this.toleranceExpiredRoasTA) {
+            if (percentage > this.toleranceExpiredRoasTA[ta]) {
                 const currentTaVrps = vrps.filter(i => i.ta === ta);
                 this._getExpiringItems(currentTaVrps)
                     .then(extra => {
                         const metadata = this.rpki.getMetadata();
                         const message = `Possible TA malfunction or incomplete VRP file: ${percentage.toFixed(2)}% of the ROAs are expiring in ${ta}`;
 
-                        this.publishAlert(`expiring-${ta}`, // The hash will prevent alert duplications in case multiple ASes/prefixes are involved
+                        this.publishAlert(`expiring-${ta}`,
                             ta,
                             {group: "default"},
                             message,
@@ -135,6 +149,13 @@ export default class MonitorROAS extends Monitor {
                                 vrpCount: sizes[ta],
                                 expiringVrps: expiringSizes[ta]
                             });
+                    })
+                    .catch(error => {
+
+                        this.logger.log({
+                            level: 'error',
+                            message: error
+                        });
                     });
             }
         }
@@ -187,17 +208,8 @@ export default class MonitorROAS extends Monitor {
                             expiring: items.map(i => i.file)
                         };
                     } else {
-                        return {};
+                        return Promise.reject("Not found yet");
                     }
-                })
-                .catch(error => {
-
-                    this.logger.log({
-                        level: 'error',
-                        message: error
-                    });
-
-                    return {};
                 });
         } else {
             return Promise.resolve({});
@@ -210,30 +222,44 @@ export default class MonitorROAS extends Monitor {
         return Promise.all([...new Set(vrps.map(i => i.prefix))]
             .map(prefix => {
                 const roas = vrps.filter(i => ipUtils.isEqualPrefix(i.prefix, prefix)); // Get only the ROAs for this prefix
-                const matchedRule = this.getMoreSpecificMatch(prefix, false); // Get the matching rule
-                if (matchedRule) {
-                    return this._getExpiringItems(roas)
-                        .then(extra => {
-                            const alertsStrings = [...new Set(roas.map(this._roaToString))];
-                            let message = "";
+                const matchedRules = this.getMoreSpecificMatches(prefix, false); // Get the matching rule
 
-                            if (extra && extra.type === "chain") {
-                                message = `The following ROAs will become invalid in less than ${roaExpirationAlertHours} hours: ${alertsStrings.join("; ")}.`
-                                message += ` The reason is the expiration of the following parent components: ${extra.expiring.join(", ")}`;
-                            } else {
-                                message = `The following ROAs will expire in less than ${roaExpirationAlertHours} hours: ${alertsStrings.join("; ")}`;
-                            }
-                            alerts = alerts.concat(alertsStrings);
+                return Promise
+                    .all(matchedRules
+                        .map(matchedRule => {
+                            return this._getExpiringItems(roas)
+                                .then(extra => {
+                                    const alertsStrings = [...new Set(roas.map(this._roaToString))];
+                                    let message = "";
 
-                            this.publishAlert(md5(message), // The hash will prevent alert duplications in case multiple ASes/prefixes are involved
-                                matchedRule.prefix,
-                                matchedRule,
-                                message,
-                                {...extra, vrps, roaExpirationHours: roaExpirationAlertHours, rpkiMetadata: metadata, subType: "roa-expire"});
-                        });
-                } else {
-                    return Promise.resolve();
-                }
+                                    if (extra && extra.type === "chain") {
+                                        message = `The following ROAs will become invalid in less than ${roaExpirationAlertHours} hours: ${alertsStrings.join("; ")}.`
+                                        message += ` The reason is the expiration of the following parent components: ${extra.expiring.join(", ")}`;
+                                    } else {
+                                        message = `The following ROAs will expire in less than ${roaExpirationAlertHours} hours: ${alertsStrings.join("; ")}`;
+                                    }
+                                    alerts = alerts.concat(alertsStrings);
+
+                                    this.publishAlert(md5(message), // The hash will prevent alert duplications in case multiple ASes/prefixes are involved
+                                        matchedRule.prefix,
+                                        matchedRule,
+                                        message,
+                                        {
+                                            ...extra,
+                                            vrps,
+                                            roaExpirationHours: roaExpirationAlertHours,
+                                            rpkiMetadata: metadata,
+                                            subType: "roa-expire"
+                                        });
+                                })
+                                .catch(error => {
+
+                                    this.logger.log({
+                                        level: 'error',
+                                        message: error
+                                    });
+                                });
+                        }))
             }))
             .then(() => alerts);
     };
@@ -265,7 +291,20 @@ export default class MonitorROAS extends Monitor {
                                 matchedRule.asn.getId(),
                                 matchedRule,
                                 message,
-                                {...extra, vrps: unsentVrps, roaExpirationHours: roaExpirationAlertHours, rpkiMetadata: metadata, subType: "roa-expire"});
+                                {
+                                    ...extra,
+                                    vrps: unsentVrps,
+                                    roaExpirationHours: roaExpirationAlertHours,
+                                    rpkiMetadata: metadata,
+                                    subType: "roa-expire"
+                                });
+                        })
+                        .catch(error => {
+
+                            this.logger.log({
+                                level: 'error',
+                                message: error
+                            });
                         });
                 }
             }
@@ -314,20 +353,26 @@ export default class MonitorROAS extends Monitor {
                 for (let prefix of [...new Set(roaDiff.map(i => i.prefix))]) {
 
                     const roas = roaDiff.filter(i => ipUtils.isEqualPrefix(i.prefix, prefix)); // Get only the ROAs for this prefix
-                    const matchedRule = this.getMoreSpecificMatch(prefix, false); // Get the matching rule
-                    if (matchedRule) {
-                        const alertsStrings = [...new Set(roas.map(this._roaToString))];
+                    const matchedRules = this.getMoreSpecificMatches(prefix, false); // Get the matching rule
+
+                    for (let matchedRule of matchedRules) {
+                        const alertsStrings = [...new Set(roas.map(this._roaToString))].sort();
                         const message = alertsStrings.length <= 10 ?
                             `ROAs change detected: ${alertsStrings.join("; ")}` :
                             `ROAs change detected: ${alertsStrings.slice(0, 10).join("; ")} and more...`;
 
                         alerts = alerts.concat(alertsStrings);
+                        const metadata = this.rpki.getMetadata();
 
                         this.publishAlert(md5(message), // The hash will prevent alert duplications in case multiple ASes/prefixes are involved
                             matchedRule.prefix,
                             matchedRule,
                             message,
-                            {diff: alertsStrings, subType: "roa-diff"});
+                            {
+                                diff: alertsStrings,
+                                subType: "roa-diff",
+                                rpkiMetadata: metadata
+                            });
                     }
                 }
             }
@@ -358,12 +403,17 @@ export default class MonitorROAS extends Monitor {
                             `ROAs change detected: ${alertsStrings.join("; ")}` :
                             `ROAs change detected: ${alertsStrings.slice(0, 10).join("; ")} and more...`;
                         alerts = alerts.concat(alertsStrings);
+                        const metadata = this.rpki.getMetadata();
 
                         this.publishAlert(md5(message), // The hash will prevent alert duplications in case multiple ASes/prefixes are involved
                             matchedRule.asn.getId(),
                             matchedRule,
                             message,
-                            {diff: alertsStrings, subType: "roa-diff"});
+                            {
+                                diff: alertsStrings,
+                                subType: "roa-diff",
+                                rpkiMetadata: metadata
+                            });
                     }
                 }
             }

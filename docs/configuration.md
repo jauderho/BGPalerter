@@ -131,6 +131,7 @@ Parameters for this connector module:
 |carefulSubscription| If this parameter is set to true (default), the RIS server will stream only the data related to our prefix. This is an advanced parameter useful only for research purposes. |
 |perMessageDeflate| Enable gzip compression on the connection. |
 |disableCanary| ConnectorRIS automatically receives BGP announcements about [RIS beacons](https://www.ripe.net/analyse/internet-measurements/routing-information-service-ris/current-ris-routing-beacons). RIS beacons are prefixes periodically announced and withdrawn for research purposes. BGPalerter uses these beacons to detect faulty data streams. By setting this parameter to true, you will disable such a check.|
+|blacklistSources| A list of prefixes, IPs, and AS numbers of blacklisted collectors' peers. Data coming from these collectors' peers will be ignored.|
 
 #### connectorRISDump
 It connects to the RIPEstat's BGPlay API and retrieves a RIS dump about the monitored resources. The retrieved dump is 2 hours old, due to limitations on the API side. 
@@ -295,14 +296,14 @@ Example of alert:
 
 Parameters for this monitor module:
 
-|Parameter| Description                                                                                                                                                                                                                                                       | 
-|---|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-|thresholdMinPeers| Minimum number of peers that need to see the BGP update before to trigger an alert.                                                                                                                                                                               |
-|notificationIntervalSeconds| It overwrite the global `notificationIntervalSeconds` for this specific monitor. See [here](#Configuration) the definition.                                                                                                                                       |
-|noProxy| If there is a global proxy configuration (see [here](http-proxy.md)), this parameter if set to true allows the single module to bypass the proxy.                                                                                                                 | 
+|Parameter| Description                                                                                                                                                                                                                                                        | 
+|---|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|thresholdMinPeers| Minimum number of peers that need to see the BGP update before to trigger an alert.                                                                                                                                                                                |
+|notificationIntervalSeconds| It overwrite the global `notificationIntervalSeconds` for this specific monitor. See [here](#Configuration) the definition.                                                                                                                                        |
+|noProxy| If there is a global proxy configuration (see [here](http-proxy.md)), this parameter if set to true allows the single module to bypass the proxy.                                                                                                                  | 
 |maxDataSamples| Maximum number of collected BGP messages for each alert which doesn't reach yet the `thresholdMinPeers`. Default to 1000. As soon as the `thresholdMinPeers` is reached, the collected BGP messages are flushed, independently from the value of `maxDataSamples`. |
-    
-    
+|skipPrefixMatch| It allows to send all the AS-related alerts to the AS monitoring rule instead of giving priority to prefix rules. Default `false`.                                                                                                                                 |
+
 #### monitorRPKI
 
 This monitor will listen for all announcements produced by the monitored Autonomous Systems and for all the announcements 
@@ -420,8 +421,8 @@ Parameters for this monitor module:
 |enableAdvancedRpkiStats| Enables RPKI data enrichment on TA malfunction alerts and expiring ROAs alerts. It increases memory usage. Default true.                                                                                                                                                                                                              |
 |roaExpirationAlertHours| If a ROA is expiring in less than this amount of hours, an alert will be triggered. The default is 2 hours. I strongly suggest to keep this value, ROAs are almost expiring every day, read above what this expiration time means.                                                                                                    |
 |checkOnlyASns| If set to true (default), ROAs diff alerts will be generated based only on the ASns contained in the `monitorASns` of `prefixes.yml`. This means that no ROA diffs will be matched against prefix matching rules (see example above).  If you are monitoring the origin AS of your prefixes, leave this option to true to avoid noise. |
-|toleranceExpiredRoasTA| The percentage of expiring ROAs in a single TA tolerated before triggering a TA malfunction alert. Default 20.                                                                                                                                                                                                                        |
-|toleranceDeletedRoasTA| The percentage of deleted ROAs in a single TA tolerated before triggering a TA malfunction alert. Default 20.                                                                                                                                                                                                                         |
+|toleranceExpiredRoasTA| The percentage of expiring ROAs in a single TA tolerated before triggering a TA malfunction alert. If you specify a numeric value, this will be used for all the TAs. Alternatively, you can specify a value for each TA (see config.yml.example).                                                                                    |
+|toleranceDeletedRoasTA| The percentage of deleted ROAs in a single TA tolerated before triggering a TA malfunction alert. If you specify a numeric value, this will be used for all the TAs. Alternatively, you can specify a value for each TA (see config.yml.example).                                                                                     |
 
 #### monitorPathNeighbors
 
